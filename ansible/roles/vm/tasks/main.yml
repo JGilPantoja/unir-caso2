@@ -1,0 +1,61 @@
+- name: Agregar clave GPG del repositorio
+  ansible.builtin.get_url:
+    url: "https://download.opensuse.org/repositories/devel:kubic:/libcontainers:/stable/xUbuntu_22.04/Release.key"
+    dest: /etc/apt/trusted.gpg.d/libcontainers.gpg
+    mode: '0644'
+
+- name: Agregar repositorio de Podman
+  ansible.builtin.apt_repository:
+    repo: "deb http://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/xUbuntu_22.04/ /"
+    state: present
+    filename: devel:kubic:libcontainers:stable
+
+- name: Actualizar caché de paquetes
+  ansible.builtin.apt:
+    update_cache: yes
+
+- name: Instalar paquetes requeridos
+  ansible.builtin.apt:
+    name:
+      - podman
+      - python3-pip
+    state: present
+
+- name: Ejecutar servidor web en Podman desde ACR
+  containers.podman.podman_container:
+    name: webserver
+    image: "{{ acr_name }}.azurecr.io/nginx:casopractico2"
+    state: started
+    ports:
+      - "80:80"
+
+- name: Crear directorio para SSL en Nginx
+  ansible.builtin.file:
+    path: /etc/nginx/ssl
+    state: directory
+    mode: '0755'
+
+- name: Generar clave privada para el certificado SSL
+  ansible.builtin.command:
+    cmd: "openssl genrsa -out /etc/nginx/ssl/nginx.key 2048"
+    creates: /etc/nginx/ssl/nginx.key
+
+- name: Generar certificado autofirmado para Nginx
+  ansible.builtin.command:
+    cmd: "openssl req -x509 -new -nodes -key /etc/nginx/ssl/nginx.key -sha256 -days 365 -out /etc/nginx/ssl/nginx.crt -subj '/CN=localhost'"
+    creates: /etc/nginx/ssl/nginx.crt
+
+- name: Instalar Apache Utils para autenticación básica
+  ansible.builtin.apt:
+    name: apache2-utils
+    state: present
+
+- name: Crear usuario para autenticación básica en Nginx
+  ansible.builtin.command:
+    cmd: "htpasswd -cb /etc/nginx/.htpasswd admin SecurePass123"
+
+- name: Configurar Nginx con SSL y autenticación básica
+  ansible.builtin.template:
+    src: nginx-secure.conf.j2
+    dest: /etc/nginx/nginx.conf
+  notify: Restart Nginx

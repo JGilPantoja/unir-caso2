@@ -1,0 +1,169 @@
+- name: Incluir variables de configuración
+  ansible.builtin.include_vars:
+    file: vars/main.yml
+
+- name: Asegurar que el directorio ~/.kube existe
+  ansible.builtin.file:
+    path: "/home/azureuser/.kube"
+    state: directory
+    owner: azureuser
+    group: azureuser
+    mode: '0700'
+
+- name: Copiar kubeconfig a la VM
+  ansible.builtin.copy:
+    src: "~/.kube/config"
+    dest: "/home/azureuser/.kube/config"
+    owner: azureuser
+    group: azureuser
+    mode: '0600'
+
+- name: Configurar la variable de entorno KUBECONFIG
+  ansible.builtin.lineinfile:
+    path: "/home/azureuser/.bashrc"
+    line: "export KUBECONFIG=/home/azureuser/.kube/config"
+    create: yes
+  become: yes
+
+- name: Aplicar la variable de entorno KUBECONFIG
+  ansible.builtin.shell: source /home/azureuser/.bashrc
+  args:
+    executable: /bin/bash
+  become: yes
+
+- name: Verificar conexión con AKS
+  ansible.builtin.command:
+    cmd: kubectl get nodes
+  register: kubectl_output
+  changed_when: false
+  environment:
+    KUBECONFIG: /home/azureuser/.kube/config
+
+- name: Mostrar resultado de kubectl
+  ansible.builtin.debug:
+    var: kubectl_output.stdout_lines
+
+- name: Crear namespace en AKS
+  kubernetes.core.k8s:
+    name: "{{ kubernetes_namespace }}"
+    api_version: v1
+    kind: Namespace
+    state: present
+  environment:
+    KUBECONFIG: /home/azureuser/.kube/config
+
+- name: Leer credenciales de Podman desde la VM
+  ansible.builtin.slurp:
+    src: /home/azureuser/.config/containers/auth.json
+  register: docker_config
+
+- name: Configurar la variable de entorno KUBECONFIG en la sesión de Ansible
+  ansible.builtin.shell: |
+    export KUBECONFIG=/home/azureuser/.kube/config
+  args:
+    executable: /bin/bash
+
+- name: Crear PersistentVolumeClaim en AKS
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: "{{ pvc_name }}"
+        namespace: "{{ kubernetes_namespace }}"
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: "{{ pvc_size }}"
+  environment:
+    KUBECONFIG: /home/azureuser/.kube/config
+
+
+
+- name: Crear secreto en AKS para ACR
+  kubernetes.core.k8s:
+    state: present
+    namespace: "{{ kubernetes_namespace }}"
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ acr_secret_name }}"
+        namespace: "{{ kubernetes_namespace }}"
+      type: kubernetes.io/dockerconfigjson
+      data:
+        .dockerconfigjson: "{{ docker_config.content | b64decode | b64encode }}"
+  environment:
+    KUBECONFIG: /home/azureuser/.kube/config
+
+- name: Desplegar aplicación en AKS con almacenamiento persistente
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: "{{ deployment_name }}"
+        namespace: "{{ kubernetes_namespace }}"
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: webserver
+        template:
+          metadata:
+            labels:
+              app: webserver
+          spec:
+            imagePullSecrets:
+              - name: "{{ acr_secret_name }}"
+            containers:
+              - name: webserver
+                image: "{{ acr_name }}.azurecr.io/apache:casopractico2"
+                ports:
+                  - containerPort: 80
+                volumeMounts:
+                  - name: "{{ pvc_name }}"
+                    mountPath: "{{ mount_path }}"
+            volumes:
+              - name: "{{ pvc_name }}"
+                persistentVolumeClaim:
+                  claimName: "{{ pvc_name }}"
+  environment:
+    KUBECONFIG: /home/azureuser/.kube/config
+
+- name: Verificar conexión con AKS desde Ansible antes del LoadBalancer
+  ansible.builtin.command:
+    cmd: kubectl get nodes
+  register: kubectl_test
+  changed_when: false
+  environment:
+    KUBECONFIG: /home/azureuser/.kube/config
+
+- name: Mostrar salida de kubectl antes del LoadBalancer
+  ansible.builtin.debug:
+    var: kubectl_test.stdout_lines
+
+- name: Crear servicio LoadBalancer para la aplicación
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: webserver-service
+        namespace: "{{ kubernetes_namespace }}"
+      spec:
+        selector:
+          app: webserver
+        ports:
+          - protocol: TCP
+            port: 80
+            targetPort: 80
+        type: LoadBalancer
+  environment:
+    KUBECONFIG: /home/azureuser/.kube/config
+

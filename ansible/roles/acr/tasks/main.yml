@@ -1,0 +1,42 @@
+- name: Hacer login en ACR
+  containers.podman.podman_login:
+    registry: "{{ acr_name }}.azurecr.io"
+    username: "{{ acr_name }}"
+    password: "{{ lookup('env', 'ACR_PASSWORD') }}"
+  register: acr_login_output
+
+- name: Mostrar resultado del login
+  debug:
+    var: acr_login_output
+
+- name: Hacer pull de nginx desde Docker Hub
+  containers.podman.podman_image:
+    name: "docker.io/library/nginx:latest"
+    state: present
+  register: nginx_pull
+
+- name: Mostrar resultado del pull
+  debug:
+    var: nginx_pull
+
+- name: Etiquetar imagen para ACR (Nginx para Podman)
+  command: "podman tag docker.io/library/nginx:latest {{ acr_name }}.azurecr.io/nginx:casopractico2"
+
+- name: Hacer push de la imagen de Nginx a ACR
+  command: "podman push {{ acr_name }}.azurecr.io/nginx:casopractico2"
+
+- name: Hacer pull de Apache desde Docker Hub
+  containers.podman.podman_image:
+    name: "docker.io/library/httpd:latest"
+    state: present
+  register: apache_pull
+
+- name: Mostrar resultado del pull de Apache
+  debug:
+    var: apache_pull
+
+- name: Etiquetar imagen para ACR (Apache para AKS)
+  command: "podman tag docker.io/library/httpd:latest {{ acr_name }}.azurecr.io/apache:casopractico2"
+
+- name: Hacer push de la imagen de Apache a ACR
+  command: "podman push {{ acr_name }}.azurecr.io/apache:casopractico2"

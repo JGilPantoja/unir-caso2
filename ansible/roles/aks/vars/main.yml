@@ -1,0 +1,8 @@
+kubernetes_namespace: casopractico2
+acr_secret_name: acr-secret
+deployment_name: webserver
+service_name: webserver-service
+image_name: casopractico2acr.azurecr.io/nginx:casopractico2
+pvc_name: webserver-pvc
+pvc_size: 1Gi
+mount_path: /usr/share/nginx/html

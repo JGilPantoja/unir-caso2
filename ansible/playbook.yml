@@ -1,0 +1,8 @@
+- name: Configurar Infraestructura en Azure
+  hosts: vm
+  become: yes
+
+  roles:
+    - acr
+    - vm
+    - aks
